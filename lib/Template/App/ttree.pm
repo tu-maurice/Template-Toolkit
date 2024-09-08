@@ -89,26 +89,27 @@ sub run {
 
     # read configuration file and command line arguments - I need to remember
     # to fix varlist() and varhash() in AppConfig to make this nicer...
-    my $config   = $self->read_config( $self->_get_rc_file() );
-    my $dryrun   = $config->nothing;
-    my $verbose  = $config->verbose || $dryrun;
-    my $colour   = $config->colour;
-    my $summary  = $config->summary;
-    my $recurse  = $config->recurse;
-    my $preserve = $config->preserve;
-    my $all      = $config->all;
-    my $libdir   = $config->lib;
-    my $ignore   = $config->ignore;
-    my $copy     = $config->copy;
-    my $link     = $config->link;
-    my $accept   = $config->accept;
-    my $absolute = $config->absolute;
-    my $relative = $config->relative;
-    my $suffix   = $config->suffix;
-    my $binmode  = $config->binmode;
-    my $depends  = $config->depend;
-    my $depsfile = $config->depend_file;
-    my $copy_dir = $config->copy_dir;
+    my $config         = $self->read_config( $self->_get_rc_file() );
+    my $dryrun         = $config->nothing;
+    my $verbose        = $config->verbose || $dryrun;
+    my $colour         = $config->colour;
+    my $summary        = $config->summary;
+    my $recurse        = $config->recurse;
+    my $preserve_owner = $config->preserve_owner;
+    my $preserve_mode  = $config->preserve_mode;
+    my $all            = $config->all;
+    my $libdir         = $config->lib;
+    my $ignore         = $config->ignore;
+    my $copy           = $config->copy;
+    my $link           = $config->link;
+    my $accept         = $config->accept;
+    my $absolute       = $config->absolute;
+    my $relative       = $config->relative;
+    my $suffix         = $config->suffix;
+    my $binmode        = $config->binmode;
+    my $depends        = $config->depend;
+    my $depsfile       = $config->depend_file;
+    my $copy_dir       = $config->copy_dir;
     my ($n_proc, $n_unmod, $n_skip, $n_copy, $n_link, $n_mkdir) = (0) x 6;
 
     my $srcdir   = $config->src
@@ -253,31 +254,32 @@ sub run {
         || die $ttmodule->error();
 
     my $running_conf = {
-        accept   => $accept,
-        all      => $all,
-        binmode  => $binmode,
-        config   => $config,
-        copy     => $copy,
-        copy_dir => $copy_dir,
-        depends  => $depends,
-        destdir  => $destdir,
-        dryrun   => $dryrun,
-        ignore   => $ignore,
-        libdir   => $libdir,
-        link     => $link,
-        n_copy   => $n_copy,
-        n_link   => $n_link,
-        n_mkdir  => $n_mkdir,
-        n_proc   => $n_proc,
-        n_skip   => $n_skip,
-        n_unmod  => $n_unmod,
-        preserve => $preserve,
-        recurse  => $recurse,
-        replace  => $replace,
-        srcdir   => $srcdir,
-        suffix   => $suffix,
-        template => $template,
-        verbose  => $verbose,
+        accept         => $accept,
+        all            => $all,
+        binmode        => $binmode,
+        config         => $config,
+        copy           => $copy,
+        copy_dir       => $copy_dir,
+        depends        => $depends,
+        destdir        => $destdir,
+        dryrun         => $dryrun,
+        ignore         => $ignore,
+        libdir         => $libdir,
+        link           => $link,
+        n_copy         => $n_copy,
+        n_link         => $n_link,
+        n_mkdir        => $n_mkdir,
+        n_proc         => $n_proc,
+        n_skip         => $n_skip,
+        n_unmod        => $n_unmod,
+        preserve_owner => $preserve_owner,
+        preserve_mode  => $preserve_mode,
+        recurse        => $recurse,
+        replace        => $replace,
+        srcdir         => $srcdir,
+        suffix         => $suffix,
+        template       => $template,
+        verbose        => $verbose,
     };
 
     if (@ARGV) {
@@ -443,7 +445,8 @@ sub process_file {
         $n_proc,
         $n_skip,
         $n_unmod,
-        $preserve,
+        $preserve_owner,
+        $preserve_mode,
         $replace,
         $srcdir,
         $suffix,
@@ -466,7 +469,8 @@ sub process_file {
         n_proc
         n_skip
         n_unmod
-        preserve
+        preserve_owner
+        preserve_mode
         replace
         srcdir
         suffix
@@ -590,8 +594,11 @@ sub process_file {
         unless ($dryrun) {
             copy($absfile, $dest) or die red("Could not copy ($absfile to $dest) : $!\n");
 
-            if ($preserve) {
+            if ($preserve_owner) {
                 chown($uid, $gid, $dest) || $self->emit_warn( red("chown($dest): $!\n") );
+            }
+
+            if ($preserve_mode) {
                 chmod($mode, $dest) || $self->emit_warn( red("chmod($dest): $!\n") );
             }
         }
@@ -616,8 +623,11 @@ sub process_file {
             $binmode ? {binmode => $binmode} : {})
             || $self->emit_log(red("  ! "), $template->error(), "\n");
 
-        if ($preserve) {
+        if ($preserve_owner) {
             chown($uid, $gid, $dest) || $self->emit_warn( red("chown($dest): $!\n") );
+        }
+
+        if ($preserve_mode) {
             chmod($mode, $dest) || $self->emit_warn( red("chmod($dest): $!\n") );
         }
     }
@@ -742,6 +752,13 @@ sub read_config {
         my ($state, $var, $value) = @_;
         $state->{ VARIABLE }->{ verbose } = $value ? ++$verbose : --$verbose;
     };
+    my $setmany = sub {
+      my @setvar = @_;
+      return sub {
+        my ($state) = @_;
+        $state->{ VARIABLE }->{ $_ } = 1 foreach @setvar;
+      };
+    };
     my $config  = AppConfig->new(
         {
             ERROR  => sub { die(@_, "\ntry `$NAME --help'\n") }
@@ -754,12 +771,14 @@ sub read_config {
         'verbose|v'   => { DEFAULT => 0, ACTION => $verbinc },
         'recurse|r'   => { DEFAULT => 0 },
         'nothing|n'   => { DEFAULT => 0 },
-        'preserve|p'  => { DEFAULT => 0 },
+        'preserve|p'  => { ACTION => $setmany->('preserve_mode','preserve_owner') },
         'absolute'    => { DEFAULT => 0 },
         'relative'    => { DEFAULT => 0 },
         'colour|color'=> { DEFAULT => 0 },
         'summary'     => { DEFAULT => 0 },
         'all|a'       => { DEFAULT => 0 },
+        'preserve_mode' => { DEFAULT => 0 },
+        'preserve_owner' => { DEFAULT => 0 },
         'define=s%',
         'suffix=s%',
         'binmode=s',
@@ -952,17 +971,17 @@ $NAME $VERSION (Template Toolkit version $Template::VERSION)
 usage: $NAME [options] [files]
 
 Options:
-   -a      (--all)          Process all files, regardless of modification
-   -r      (--recurse)      Recurse into sub-directories
-   -p      (--preserve)     Preserve file ownership and permission
-   -n      (--nothing)      Do nothing, just print summary (enables -v)
-   -v      (--verbose)      Verbose mode. Use twice for more verbosity: -v -v
-   -h      (--help)         This help
-   -s DIR  (--src=DIR)      Source directory
-   -d DIR  (--dest=DIR)     Destination directory
-   -c DIR  (--cfg=DIR)      Location of configuration files
-   -l DIR  (--lib=DIR)      Library directory (INCLUDE_PATH)  (multiple)
-   -f FILE (--file=FILE)    Read named configuration file     (multiple)
+   -a      (--all)            Process all files, regardless of modification
+   -r      (--recurse)        Recurse into sub-directories
+   -p      (--preserve)       Preserve file ownership and permission
+   -n      (--nothing)        Do nothing, just print summary (enables -v)
+   -v      (--verbose)        Verbose mode. Use twice for more verbosity: -v -v
+   -h      (--help)           This help
+   -s DIR  (--src=DIR)        Source directory
+   -d DIR  (--dest=DIR)       Destination directory
+   -c DIR  (--cfg=DIR)        Location of configuration files
+   -l DIR  (--lib=DIR)        Library directory (INCLUDE_PATH)  (multiple)
+   -f FILE (--file=FILE)      Read named configuration file     (multiple)
 
 Display options:
    --colour / --color       Enable colo(u)rful verbose output.
@@ -1013,6 +1032,8 @@ Additional options to set Template Toolkit configuration items:
    --compile_dir=DIR        Directory for compiled template files
    --perl5lib=DIR           Specify additional Perl library directories
    --template_module=MODULE Specify alternate Template module
+   --preserve-mode          Preserve file permission
+   --preserve-owner         Preserve file ownership
 
 See 'perldoc ttree' for further information.
 
